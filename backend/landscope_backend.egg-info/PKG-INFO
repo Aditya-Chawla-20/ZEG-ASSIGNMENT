@@ -1,0 +1,62 @@
+Metadata-Version: 2.4
+Name: landscope-backend
+Version: 1.0.0
+Summary: LandScope: Buildable Land Analysis API
+Author: LandScope Team
+License: MIT
+Requires-Python: >=3.11
+Description-Content-Type: text/markdown
+Requires-Dist: fastapi>=0.111.0
+Requires-Dist: uvicorn[standard]>=0.29.0
+Requires-Dist: pydantic>=2.7.0
+Requires-Dist: pydantic-settings>=2.2.0
+Requires-Dist: sqlalchemy>=2.0.30
+Requires-Dist: geoalchemy2>=0.15.0
+Requires-Dist: alembic>=1.13.0
+Requires-Dist: shapely>=2.0.4
+Requires-Dist: pyproj>=3.6.1
+Requires-Dist: psycopg2-binary>=2.9.9
+Requires-Dist: python-dotenv>=1.0.0
+Requires-Dist: httpx>=0.27.0
+Requires-Dist: structlog>=24.1.0
+Requires-Dist: geojson-pydantic>=1.0.2
+Requires-Dist: anyio>=4.3.0
+Requires-Dist: numpy>=1.26.0
+Provides-Extra: dev
+Requires-Dist: pytest>=8.2.0; extra == "dev"
+Requires-Dist: pytest-asyncio>=0.23.0; extra == "dev"
+Requires-Dist: pytest-cov>=5.0.0; extra == "dev"
+Requires-Dist: ruff>=0.4.0; extra == "dev"
+Requires-Dist: mypy>=1.10.0; extra == "dev"
+Requires-Dist: types-psycopg2; extra == "dev"
+
+# LandScope Backend
+
+Buildable Land Analysis API — a FastAPI geospatial service that determines
+buildable land area for a parcel after applying environmental and infrastructure
+constraints (wetlands, FEMA flood hazard, transmission line corridors) and
+user-drawn manual exclusions / restorations.
+
+## Quickstart
+
+```bash
+pip install -e ".[dev]"
+uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
+```
+
+API docs are available at <http://localhost:8000/api/docs>.
+
+## Stack
+
+- **FastAPI** + **Pydantic v2** for the API layer
+- **SQLAlchemy 2.x** + **GeoAlchemy2** for persistence (PostgreSQL + PostGIS)
+- **Shapely 2.x** + **pyproj** for geometry operations
+- **structlog** for structured JSON logging
+- **Alembic** for migrations
+
+## Analysis CRS
+
+All area calculations are performed in a projected CRS — **EPSG:32614**
+(UTM Zone 14N), appropriate for Brazos County, Texas — never in EPSG:4326
+or EPSG:3857. Geometries are stored in both the analysis CRS and WGS84 for
+fast serving to the frontend.

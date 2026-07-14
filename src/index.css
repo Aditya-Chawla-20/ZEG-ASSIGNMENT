@@ -1,0 +1,68 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  html,
+  body,
+  #root {
+    height: 100%;
+    margin: 0;
+  }
+
+  body {
+    font-family: theme('fontFamily.sans');
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    color: #1e293b; /* brand-800 */
+    background-color: #f8fafc; /* brand-50 */
+  }
+}
+
+/* MapLibre GL popup styling overrides */
+.landscope-popup {
+  font-family: theme('fontFamily.sans');
+  min-width: 140px;
+}
+
+.landscope-popup__title {
+  font-size: 12px;
+  font-weight: 600;
+  color: #1e293b;
+}
+
+.landscope-popup__desc {
+  margin-top: 2px;
+  font-size: 11px;
+  color: #64748b;
+  line-height: 1.4;
+}
+
+/* MapLibre attribution / controls dark text for light map */
+.maplibregl-ctrl-attrib {
+  font-size: 10px;
+  background: rgba(255, 255, 255, 0.8);
+}
+
+.maplibregl-ctrl-attrib a {
+  color: #475569;
+}
+
+/* Range input styling */
+input[type='range'] {
+  height: 4px;
+  border-radius: 2px;
+  background: #e2e8f0;
+}
+
+/* Scrollbar styling for the control panel */
+.overflow-y-auto::-webkit-scrollbar {
+  width: 6px;
+}
+.overflow-y-auto::-webkit-scrollbar-thumb {
+  background: #cbd5e1;
+  border-radius: 3px;
+}
+.overflow-y-auto::-webkit-scrollbar-track {
+  background: transparent;
+}

@@ -1,0 +1,103 @@
+name: CI
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main]
+
+jobs:
+  backend-test:
+    name: Backend Tests
+    runs-on: ubuntu-latest
+    
+    services:
+      postgres:
+        image: postgis/postgis:16-3.4
+        env:
+          POSTGRES_DB: landscope_test
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: password
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          
+      - name: Install backend dependencies
+        working-directory: backend
+        run: |
+          pip install --upgrade pip
+          pip install -e ".[dev]"
+          
+      - name: Run ruff lint
+        working-directory: backend
+        run: ruff check app/ tests/ scripts/
+        
+      - name: Run ruff format check
+        working-directory: backend
+        run: ruff format --check app/ tests/ scripts/
+        
+      - name: Run mypy
+        working-directory: backend
+        run: mypy app/
+        env:
+          DATABASE_URL: postgresql://postgres:password@localhost:5432/landscope_test
+          
+      - name: Run migrations
+        working-directory: backend
+        run: alembic upgrade head
+        env:
+          DATABASE_URL: postgresql://postgres:password@localhost:5432/landscope_test
+          
+      - name: Run tests
+        working-directory: backend
+        run: pytest tests/ -v --tb=short --cov=app --cov-report=term-missing
+        env:
+          DATABASE_URL: postgresql://postgres:password@localhost:5432/landscope_test
+          ANALYSIS_CRS: EPSG:32614
+          ANALYSIS_CRS_EPSG: "32614"
+          DEMO_COUNTY: Brazos
+
+  frontend-test:
+    name: Frontend Tests
+    runs-on: ubuntu-latest
+    
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Set up Node.js 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          
+      - name: Install dependencies
+        run: npm ci
+        
+      - name: TypeScript check
+        run: npm run typecheck
+        
+      - name: Run lint
+        run: npm run lint
+        
+      - name: Run unit tests
+        run: npm run test
+        
+  docker-build:
+    name: Docker Build Check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build Docker images
+        run: docker compose build
