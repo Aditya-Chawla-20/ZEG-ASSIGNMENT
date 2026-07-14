@@ -28,9 +28,8 @@ class Settings(BaseSettings):
     )
 
     # --- Coordinate reference systems ---------------------------------------
-    # UTM Zone 14N is appropriate for Brazos County, Texas.
-    ANALYSIS_CRS: str = "EPSG:32614"
-    ANALYSIS_CRS_EPSG: int = 32614
+    ANALYSIS_CRS: str = "EPSG:3857"
+    ANALYSIS_CRS_EPSG: int = 3857
     WGS84_CRS: str = "EPSG:4326"
     WGS84_EPSG: int = 4326
 

@@ -12,19 +12,24 @@ down:
 build:
 	docker compose build
 
-# Full bootstrap: start, migrate, seed demo data
+# Full bootstrap: start, migrate, seed real data
 bootstrap: up
 	@echo "Waiting for database..."
 	@sleep 5
-	docker compose exec backend python scripts/ingest_demo_data.py
+	docker compose exec backend alembic upgrade head
+	docker compose exec backend python scripts/ingest_real_data.py
 	@echo "Bootstrap complete. Open http://localhost:3000"
 
 # Run Alembic migrations
 migrate:
 	docker compose exec backend alembic upgrade head
 
-# Seed demo data only (DB must be ready)
+# Seed real data (DB must be ready)
 seed:
+	docker compose exec backend python scripts/ingest_real_data.py
+
+# Seed demo data only (DB must be ready)
+seed-demo:
 	docker compose exec backend python scripts/ingest_demo_data.py
 
 # Run backend tests

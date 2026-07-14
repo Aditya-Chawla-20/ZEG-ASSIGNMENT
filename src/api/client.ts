@@ -1,4 +1,3 @@
-import { createClient } from '@supabase/supabase-js';
 import type {
   ParcelSummary,
   ParcelDetail,
@@ -8,16 +7,8 @@ import type {
   DatasetMetadata,
 } from '@/types';
 
-const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
-const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY;
-
-if (!supabaseUrl || !supabaseAnonKey) {
-  throw new Error('Missing VITE_SUPABASE_URL or VITE_SUPABASE_ANON_KEY in environment');
-}
-
-export const supabase = createClient(supabaseUrl, supabaseAnonKey, {
-  auth: { persistSession: false },
-});
+// Use local backend URL or fall back to localhost
+const baseUrl = import.meta.env.VITE_API_URL || 'http://localhost:8000';
 
 /** Normalized error thrown by API helpers. */
 export interface ApiError {
@@ -26,42 +17,40 @@ export interface ApiError {
   detail?: unknown;
 }
 
-const edgeFunctionUrl = `${supabaseUrl}/functions/v1/landscope-analysis`;
-
 const constraintConfigResponse: ConstraintConfigResponse = {
   constraints: [
     {
       type: 'wetlands',
       label: 'Wetlands',
-      defaultBufferMeters: 0,
+      defaultBufferMeters: 30,
       minBuffer: 0,
-      maxBuffer: 500,
+      maxBuffer: 5000,
       defaultEnabled: true,
       supportedClassifications: [],
     },
     {
       type: 'floodplain',
-      label: 'Floodplain',
+      label: 'FEMA Flood Hazard',
       defaultBufferMeters: 0,
       minBuffer: 0,
-      maxBuffer: 500,
+      maxBuffer: 1000,
       defaultEnabled: true,
-      supportedClassifications: ['AE', 'X', 'A', 'AO', 'AH', 'VE'],
+      supportedClassifications: ['A', 'AE', 'AH', 'AO', 'VE', 'X', 'X500'],
     },
     {
       type: 'transmission',
       label: 'Transmission Lines',
-      defaultBufferMeters: 50,
+      defaultBufferMeters: 30,
       minBuffer: 0,
-      maxBuffer: 1000,
+      maxBuffer: 500,
       defaultEnabled: true,
-      supportedClassifications: ['138kV', '345kV', '69kV', '500kV'],
+      supportedClassifications: [],
     },
   ],
   priorityOrder: ['wetlands', 'floodplain', 'transmission'],
-  analysisCrs: 'EPSG:4326',
+  analysisCrs: 'EPSG:3857',
   analysisCrsDescription:
-    'Analysis is performed in WGS84 (EPSG:4326) using geodesic area calculations for accuracy.',
+    'Analysis is performed in Web Mercator (EPSG:3857) using planar area calculations.',
 };
 
 export interface ParcelSearchResponse {
@@ -69,39 +58,6 @@ export interface ParcelSearchResponse {
   total: number;
   limit: number;
   offset: number;
-}
-
-interface SupabaseParcel {
-  id: string;
-  source_id: string;
-  display_name: string;
-  county_name: string;
-  address: string | null;
-  source_area_acres: number | null;
-  geometry_geojson?: GeoJSON.Geometry | null;
-  centroid_lon: number;
-  centroid_lat: number;
-}
-
-function mapParcelSummary(p: SupabaseParcel): ParcelSummary {
-  return {
-    id: p.id,
-    sourceId: p.source_id,
-    displayName: p.display_name,
-    countyName: p.county_name,
-    address: p.address,
-    sourceAreaAcres: p.source_area_acres != null ? Number(p.source_area_acres) : null,
-    centroid: { lon: p.centroid_lon, lat: p.centroid_lat },
-  };
-}
-
-function mapParcelDetail(p: SupabaseParcel): ParcelDetail {
-  const geom = p.geometry_geojson as GeoJSON.MultiPolygon | GeoJSON.Polygon;
-  return {
-    ...mapParcelSummary(p),
-    geometryGeojson: geom,
-    geometry: geom,
-  };
 }
 
 /**
@@ -114,46 +70,35 @@ export async function searchParcels(
   offset = 0,
   signal?: AbortSignal,
 ): Promise<ParcelSearchResponse> {
-  let q = supabase
-    .from('ls_parcels')
-    .select('id, source_id, display_name, county_name, address, source_area_acres, centroid_lon, centroid_lat', { count: 'exact' })
-    .order('display_name');
-
+  let url = `${baseUrl}/api/v1/parcels?limit=${limit}&offset=${offset}`;
   if (query && query.trim()) {
-    const trimmed = query.trim();
-    // Try exact source_id match first, then fuzzy text search
-    if (trimmed.toUpperCase().startsWith('DEMO-PARCEL')) {
-      q = q.eq('source_id', trimmed.toUpperCase());
-    } else {
-      q = q.or(`display_name.ilike.%${trimmed}%,address.ilike.%${trimmed}%,source_id.ilike.%${trimmed}%`);
-    }
+    url += `&query=${encodeURIComponent(query.trim())}`;
   }
-
   if (bbox) {
-    const [minx, miny, maxx, maxy] = bbox;
-    q = q
-      .gte('centroid_lon', minx)
-      .lte('centroid_lon', maxx)
-      .gte('centroid_lat', miny)
-      .lte('centroid_lat', maxy);
+    url += `&bbox=${bbox.join(',')}`;
   }
 
-  q = q.range(offset, offset + limit - 1);
-
-  if (signal) q = q.abortSignal(signal);
-  const { data, error, count } = await q;
-
-  if (error) {
-    throw { status: 500, message: error.message } as ApiError;
+  const response = await fetch(url, { signal });
+  if (!response.ok) {
+    throw { status: response.status, message: 'Failed to search parcels' } as ApiError;
   }
 
-  const items = (data ?? []).map(mapParcelSummary);
+  const data = await response.json();
+  const items = (data.items ?? []).map((p: any) => ({
+    id: p.id,
+    sourceId: p.sourceId !== undefined ? p.sourceId : p.source_id,
+    displayName: p.displayName !== undefined ? p.displayName : p.display_name,
+    countyName: p.countyName !== undefined ? p.countyName : p.county_name,
+    address: p.address,
+    sourceAreaAcres: p.sourceAreaAcres !== undefined ? p.sourceAreaAcres : p.source_area_acres,
+    centroid: p.centroid,
+  }));
 
   return {
     items,
-    total: count ?? items.length,
-    limit,
-    offset,
+    total: data.total,
+    limit: data.limit,
+    offset: data.offset,
   };
 }
 
@@ -161,37 +106,36 @@ export async function searchParcels(
  * Fetch full parcel detail including WGS84 GeoJSON geometry.
  */
 export async function getParcel(id: string, signal?: AbortSignal): Promise<ParcelDetail> {
-  let q = supabase
-    .from('ls_parcels')
-    .select('id, source_id, display_name, county_name, address, source_area_acres, geometry_geojson, centroid_lon, centroid_lat')
-    .or(`id.eq.${id},source_id.eq.${id}`);
-
-  if (signal) q = q.abortSignal(signal);
-  const { data, error } = await q.maybeSingle();
-
-  if (error) {
-    throw { status: 500, message: error.message } as ApiError;
+  const response = await fetch(`${baseUrl}/api/v1/parcels/${id}`, { signal });
+  if (!response.ok) {
+    throw { status: response.status, message: `Failed to fetch parcel ${id}` } as ApiError;
   }
 
-  if (!data) {
-    throw { status: 404, message: `Parcel not found: ${id}` } as ApiError;
-  }
-
-  return mapParcelDetail(data as SupabaseParcel);
+  const p = await response.json();
+  return {
+    id: p.id,
+    sourceId: p.sourceId !== undefined ? p.sourceId : p.source_id,
+    displayName: p.displayName !== undefined ? p.displayName : p.display_name,
+    countyName: p.countyName !== undefined ? p.countyName : p.county_name,
+    address: p.address,
+    sourceAreaAcres: p.sourceAreaAcres !== undefined ? p.sourceAreaAcres : p.source_area_acres,
+    centroid: p.centroid,
+    geometryGeojson: p.geometryGeojson !== undefined ? p.geometryGeojson : p.geometry_geojson,
+    geometry: p.geometryGeojson !== undefined ? p.geometryGeojson : p.geometry_geojson,
+  };
 }
 
 /**
- * Run a buildable-land analysis for a parcel via edge function.
+ * Run a buildable-land analysis for a parcel via backend API.
  */
 export async function runAnalysis(
   req: AnalysisRequest,
   signal?: AbortSignal,
 ): Promise<AnalysisResult> {
-  const response = await fetch(edgeFunctionUrl, {
+  const response = await fetch(`${baseUrl}/api/v1/analyses`, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
-      Authorization: `Bearer ${supabaseAnonKey}`,
     },
     body: JSON.stringify(req),
     signal,
@@ -201,72 +145,57 @@ export async function runAnalysis(
     let message = `Analysis failed (${response.status})`;
     try {
       const body = await response.json();
-      if (body?.error?.message) message = body.error.message;
+      if (body?.detail) message = typeof body.detail === 'string' ? body.detail : JSON.stringify(body.detail);
     } catch {
-      // ignore parse error
+      // ignore
     }
     throw { status: response.status, message } as ApiError;
   }
 
-  const data = await response.json();
-  return data as AnalysisResult;
+  return response.json();
 }
 
 /**
  * Fetch the constraint configuration for the frontend.
  */
 export async function getConstraintConfig(): Promise<ConstraintConfigResponse> {
+  try {
+    const response = await fetch(`${baseUrl}/api/v1/config/constraints`);
+    if (response.ok) {
+      return response.json();
+    }
+  } catch {
+    // fallback
+  }
   return constraintConfigResponse;
-}
-
-interface SupabaseDataset {
-  id: string;
-  name: string;
-  provider: string;
-  source_url: string;
-  licence: string;
-  retrieved_at: string | null;
-  source_version: string | null;
-  analysis_crs: string;
-  feature_count: number | null;
-  notes: string | null;
 }
 
 /**
  * Fetch metadata for all source datasets.
  */
 export async function getDatasets(signal?: AbortSignal): Promise<DatasetMetadata[]> {
-  let q = supabase
-    .from('ls_dataset_metadata')
-    .select('id, name, provider, source_url, licence, retrieved_at, source_version, analysis_crs, feature_count, notes')
-    .order('name');
-  if (signal) q = q.abortSignal(signal);
-  const { data, error } = await q;
-
-  if (error) {
-    return [];
+  try {
+    const response = await fetch(`${baseUrl}/api/v1/datasets`, { signal });
+    if (response.ok) {
+      return response.json();
+    }
+  } catch {
+    // fallback
   }
-
-  return (data ?? []).map((d: SupabaseDataset) => ({
-    id: d.id,
-    name: d.name,
-    provider: d.provider,
-    sourceUrl: d.source_url,
-    licence: d.licence,
-    retrievedAt: d.retrieved_at,
-    sourceVersion: d.source_version,
-    analysisCrs: d.analysis_crs,
-    featureCount: d.feature_count,
-    notes: d.notes,
-  }));
+  return [];
 }
 
-/** Simple health probe — always returns true since we use Supabase directly. */
+/** Simple health probe. */
 export async function getHealth(): Promise<boolean> {
-  return true;
+  try {
+    const response = await fetch(`${baseUrl}/health`);
+    return response.ok;
+  } catch {
+    return false;
+  }
 }
 
-// ─── Saved Analyses ───────────────────────────────────────────────────────────
+// ─── Saved Analyses (Local Storage fallback) ───────────────────────────────────
 
 export interface SavedAnalysis {
   id: string;
@@ -278,14 +207,23 @@ export interface SavedAnalysis {
   createdAt: string;
 }
 
-interface SupabaseSavedAnalysis {
-  id: string;
-  parcel_id: string;
-  parcel_name: string;
-  settings: unknown;
-  summary: unknown;
-  breakdown: unknown;
-  created_at: string;
+const LOCAL_STORAGE_KEY = 'landscope_saved_analyses';
+
+function getLocalSavedAnalyses(): SavedAnalysis[] {
+  try {
+    const val = localStorage.getItem(LOCAL_STORAGE_KEY);
+    return val ? JSON.parse(val) : [];
+  } catch {
+    return [];
+  }
+}
+
+function saveLocalSavedAnalyses(list: SavedAnalysis[]) {
+  try {
+    localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify(list));
+  } catch (err) {
+    console.error('Failed to save analyses to local storage', err);
+  }
 }
 
 export async function saveAnalysis(
@@ -294,61 +232,49 @@ export async function saveAnalysis(
   parcelName: string,
   settings: unknown,
 ): Promise<string> {
-  const { data, error } = await supabase
-    .from('ls_saved_analyses')
-    .insert({
-      parcel_id: parcelId,
-      parcel_name: parcelName,
-      settings,
-      summary: result.summary,
-      breakdown: result.breakdown,
-      warnings: result.warnings,
-    })
-    .select('id')
-    .single();
-
-  if (error) {
-    throw { status: 500, message: error.message } as ApiError;
-  }
-
-  return data.id;
+  const list = getLocalSavedAnalyses();
+  const id = crypto.randomUUID ? crypto.randomUUID() : Math.random().toString(36).substring(2);
+  const newAnalysis: SavedAnalysis = {
+    id,
+    parcelId,
+    parcelName,
+    settings,
+    summary: result.summary,
+    breakdown: result.breakdown,
+    createdAt: new Date().toISOString(),
+  };
+  list.unshift(newAnalysis);
+  saveLocalSavedAnalyses(list);
+  return id;
 }
 
 export async function listSavedAnalyses(): Promise<SavedAnalysis[]> {
-  const { data, error } = await supabase
-    .from('ls_saved_analyses')
-    .select('id, parcel_id, parcel_name, settings, summary, breakdown, created_at')
-    .order('created_at', { ascending: false })
-    .limit(50);
-
-  if (error || !data) {
-    return [];
-  }
-
-  return (data as SupabaseSavedAnalysis[]).map((d) => ({
-    id: d.id,
-    parcelId: d.parcel_id,
-    parcelName: d.parcel_name,
-    settings: d.settings,
-    summary: d.summary as import('@/types').AnalysisSummary,
-    breakdown: d.breakdown as import('@/types').BreakdownItem[],
-    createdAt: d.created_at,
-  }));
+  return getLocalSavedAnalyses();
 }
 
 export async function deleteSavedAnalysis(id: string): Promise<void> {
-  await supabase.from('ls_saved_analyses').delete().eq('id', id);
+  const list = getLocalSavedAnalyses();
+  const filtered = list.filter((item) => item.id !== id);
+  saveLocalSavedAnalyses(filtered);
 }
 
 export async function listAllParcels(): Promise<ParcelSummary[]> {
-  const { data, error } = await supabase
-    .from('ls_parcels')
-    .select('id, source_id, display_name, county_name, address, source_area_acres, centroid_lon, centroid_lat')
-    .order('display_name');
-
-  if (error || !data) {
-    return [];
+  try {
+    const response = await fetch(`${baseUrl}/api/v1/parcels?limit=100`);
+    if (response.ok) {
+      const data = await response.json();
+      return (data.items ?? []).map((p: any) => ({
+        id: p.id,
+        sourceId: p.sourceId !== undefined ? p.sourceId : p.source_id,
+        displayName: p.displayName !== undefined ? p.displayName : p.display_name,
+        countyName: p.countyName !== undefined ? p.countyName : p.county_name,
+        address: p.address,
+        sourceAreaAcres: p.sourceAreaAcres !== undefined ? p.sourceAreaAcres : p.source_area_acres,
+        centroid: p.centroid,
+      }));
+    }
+  } catch {
+    // fallback
   }
-
-  return (data as SupabaseParcel[]).map(mapParcelSummary);
+  return [];
 }

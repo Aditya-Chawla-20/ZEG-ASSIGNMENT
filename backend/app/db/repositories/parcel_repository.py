@@ -37,25 +37,36 @@ class ParcelRepository:
         q = self.db.query(Parcel)
 
         if query:
-            pattern = f"%{query}%"
-            q = q.filter(
-                or_(
-                    Parcel.display_name.ilike(pattern),
-                    Parcel.source_id.ilike(pattern),
-                    Parcel.address.ilike(pattern),
+            query = query.strip()
+            # Fast path: if searching for a source ID or BCAD number
+            if query.upper().startswith("BCAD"):
+                q = q.filter(Parcel.source_id.ilike(f"{query}%"))
+            else:
+                # Use prefix matching if the query is short, to utilize indexes/scans faster
+                if len(query) < 5:
+                    pattern = f"{query}%"
+                else:
+                    pattern = f"%{query}%"
+                q = q.filter(
+                    or_(
+                        Parcel.display_name.ilike(pattern),
+                        Parcel.address.ilike(pattern),
+                        Parcel.source_id.ilike(pattern),
+                    )
                 )
-            )
 
         if bbox and len(bbox) == 4:
             from geoalchemy2.elements import WKTElement
             from shapely.geometry import box as shapely_box
+            from shapely.ops import transform
 
-            from app.geometry.crs import to_analysis_crs
+            from app.geometry.crs import get_transformer
 
             minx, miny, maxx, maxy = bbox
             wgs_bbox = shapely_box(minx, miny, maxx, maxy)
-            analysis_bbox = to_analysis_crs(wgs_bbox)
-            bbox_wkt = WKTElement(analysis_bbox.wkt, srid=32614)
+            transformer = get_transformer("EPSG:4326", "EPSG:32614")
+            db_bbox = transform(transformer.transform, wgs_bbox)
+            bbox_wkt = WKTElement(db_bbox.wkt, srid=32614)
             q = q.filter(Parcel.geometry.ST_Intersects(bbox_wkt))
 
         total = q.count()

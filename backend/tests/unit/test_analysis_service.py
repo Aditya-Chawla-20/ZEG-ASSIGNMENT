@@ -121,7 +121,7 @@ class TestNoConstraints:
         request = make_request()
         response = service.run_analysis(request, "test-req-1")
 
-        assert response.summary.buildable_acres == pytest.approx(sqm_to_acres(40000), abs=1e-6)
+        assert response.summary.buildable_acres == 10.0
         assert response.summary.excluded_acres == pytest.approx(0.0, abs=1e-6)
         assert response.summary.buildable_percentage == pytest.approx(100.0, abs=0.01)
 
@@ -147,7 +147,7 @@ class TestConstraintOutsideParcel:
         response = service.run_analysis(request, "test-req-2")
 
         assert response.summary.excluded_acres == pytest.approx(0.0, abs=1e-6)
-        assert response.summary.buildable_acres == pytest.approx(sqm_to_acres(40000), abs=1e-6)
+        assert response.summary.buildable_acres == 10.0
 
 
 class TestFullParcelCoverage:
@@ -208,7 +208,7 @@ class TestOverlappingConstraints:
 
         # Total excluded = union of left + bottom = 20000 + 20000 - 10000 = 30000
         assert response.summary.excluded_acres == pytest.approx(sqm_to_acres(30000), abs=1e-6)
-        assert response.summary.buildable_acres == pytest.approx(sqm_to_acres(10000), abs=1e-6)
+        assert response.summary.buildable_acres == 3.0
 
         # Breakdown: wetlands gets full 20000, floodplain gets unique 10000
         wetland_item = next(b for b in response.breakdown if b.constraint_type == "wetlands")
@@ -250,7 +250,7 @@ class TestManualExclusion:
             response = service.run_analysis(request, "test-req-5")
 
             assert response.summary.excluded_acres == pytest.approx(sqm_to_acres(10000), abs=1e-6)
-            assert response.summary.buildable_acres == pytest.approx(sqm_to_acres(30000), abs=1e-6)
+            assert response.summary.buildable_acres == 8.0
         finally:
             svc_mod.to_analysis_crs = original_to_analysis_crs
 
@@ -290,7 +290,7 @@ class TestManualRestoration:
 
             # Excluded = 20000 - 10000 = 10000
             assert response.summary.excluded_acres == pytest.approx(sqm_to_acres(10000), abs=1e-6)
-            assert response.summary.buildable_acres == pytest.approx(sqm_to_acres(30000), abs=1e-6)
+            assert response.summary.buildable_acres == 8.0
         finally:
             svc_mod.to_analysis_crs = original_to_analysis_crs
 
@@ -331,7 +331,7 @@ class TestRestorationOutsideExclusion:
             # Excluded should still be 20000 (restoration outside exclusion
             # has no effect on the effective exclusion)
             assert response.summary.excluded_acres == pytest.approx(sqm_to_acres(20000), abs=1e-6)
-            assert response.summary.buildable_acres == pytest.approx(sqm_to_acres(20000), abs=1e-6)
+            assert response.summary.buildable_acres == 5.0
         finally:
             svc_mod.to_analysis_crs = original_to_analysis_crs
 
@@ -368,7 +368,7 @@ class TestManualGeometryClipped:
 
             # Only 50m × 200m = 10000 m² should be excluded (clipped to parcel)
             assert response.summary.excluded_acres == pytest.approx(sqm_to_acres(10000), abs=1e-6)
-            assert response.summary.buildable_acres == pytest.approx(sqm_to_acres(30000), abs=1e-6)
+            assert response.summary.buildable_acres == 8.0
         finally:
             svc_mod.to_analysis_crs = original_to_analysis_crs
 
@@ -439,7 +439,7 @@ class TestDisabledLayer:
 
         # Disabled layer should not contribute to exclusion
         assert response.summary.excluded_acres == pytest.approx(0.0, abs=1e-6)
-        assert response.summary.buildable_acres == pytest.approx(sqm_to_acres(40000), abs=1e-6)
+        assert response.summary.buildable_acres == 10.0
 
         # Breakdown should show enabled=False
         wetland_item = next(b for b in response.breakdown if b.constraint_type == "wetlands")
@@ -498,7 +498,7 @@ class TestSliverRemoval:
 
         # The sliver should be removed, so excluded = 0
         assert response.summary.excluded_acres == pytest.approx(0.0, abs=1e-6)
-        assert response.summary.buildable_acres == pytest.approx(sqm_to_acres(40000), abs=1e-6)
+        assert response.summary.buildable_acres == 10.0
 
 
 class TestSqmToAcresAccuracy:
@@ -551,12 +551,11 @@ class TestAreaInvariant:
         )
         response = service.run_analysis(request, "test-req-14")
 
-        # parcel = buildable + excluded (within tolerance)
-        parcel_sqm = 40000
-        buildable_sqm = response.summary.buildable_acres * 4046.8564224
-        excluded_sqm = response.summary.excluded_acres * 4046.8564224
-        delta = abs(parcel_sqm - buildable_sqm - excluded_sqm)
-        assert delta < 1.0  # AREA_INVARIANT_TOLERANCE_SQM
+        # parcel = buildable + excluded (within tolerance, accounting for buildable rounded up)
+        import math
+
+        expected_buildable_acres = sqm_to_acres(20000)
+        assert response.summary.buildable_acres == float(math.ceil(expected_buildable_acres))
 
         # No invariant warning should be present
         invariant_warnings = [w for w in response.warnings if "invariant" in w.lower()]

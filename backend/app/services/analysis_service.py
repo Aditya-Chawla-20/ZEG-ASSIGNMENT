@@ -24,7 +24,10 @@ from __future__ import annotations
 
 import time
 
+from shapely.geometry import MultiPolygon
 from shapely.geometry.base import BaseGeometry
+from shapely.ops import transform
+from pyproj import Transformer
 
 from app.core.config import get_settings
 from app.core.exceptions import ParcelNotFoundError
@@ -94,6 +97,7 @@ class AnalysisService:
             raise ParcelNotFoundError(f"Parcel {request.parcel_id} not found")
 
         parcel_geom = geometry_from_wkb(parcel.geometry)
+        parcel_geom = to_analysis_crs(parcel_geom, from_crs="EPSG:32614")
         parcel_geom = normalize_geometry(parcel_geom)
         if parcel_geom is None or parcel_geom.is_empty:
             raise ParcelNotFoundError(f"Parcel {request.parcel_id} has no valid geometry")
@@ -109,9 +113,20 @@ class AnalysisService:
 
         # Expand envelope by max buffer for pre-filtering
         max_buffer = max((c.buffer_meters for c in enabled_constraints), default=0.0)
-        parcel_geom_wkt = parcel_geom.wkt
         envelope = parcel_geom.envelope.buffer(max_buffer + 100)
-        envelope_wkt = envelope.wkt
+
+        # Transform envelope and parcel geom back to database native CRS (EPSG:32614) for querying
+        from pyproj import Transformer
+        from shapely.ops import transform
+
+        to_db_transformer = Transformer.from_crs(
+            self.settings.ANALYSIS_CRS, "EPSG:32614", always_xy=True
+        )
+        parcel_geom_db = transform(to_db_transformer.transform, parcel_geom)
+        envelope_db = transform(to_db_transformer.transform, envelope)
+
+        parcel_geom_wkt = parcel_geom_db.wkt
+        envelope_wkt = envelope_db.wkt
 
         candidate_features = self.constraint_repo.get_intersecting(
             parcel_geom_wkt=parcel_geom_wkt,
@@ -144,7 +159,20 @@ class AnalysisService:
                     if f.classification and f.classification in cfg.classifications
                 ]
 
-            if not relevant:
+            if not relevant and cfg.type == "wetlands":
+                # --- Live USFWS NWI fallback ---
+                # No wetland features in DB for this parcel; fetch from USFWS.
+                logger.info(
+                    "wetlands_live_fallback",
+                    request_id=request_id,
+                    reason="no_db_features",
+                )
+                layer_geometries[cfg.type] = self._fetch_live_wetlands(
+                    parcel_geom, cfg.buffer_meters, warnings
+                )
+                layer_dataset_ids[cfg.type] = None
+                continue
+            elif not relevant:
                 layer_geometries[cfg.type] = None
                 layer_dataset_ids[cfg.type] = None
                 continue
@@ -161,6 +189,8 @@ class AnalysisService:
                 geom = normalize_geometry(geom)
                 if geom is None:
                     continue
+                # Transform from DB CRS (EPSG:32614) to analysis CRS
+                geom = to_analysis_crs(geom, from_crs="EPSG:32614")
                 if cfg.buffer_meters > 0:
                     geom = buffer_geometry(geom, cfg.buffer_meters)
                 feature_geoms.append(geom)
@@ -236,8 +266,10 @@ class AnalysisService:
             else 0.0
         )
         buildable_sqm = area_sqm(buildable) if buildable and not buildable.is_empty else 0.0
+        import math
+
         excluded_acres = sqm_to_acres(excluded_sqm)
-        buildable_acres = sqm_to_acres(buildable_sqm)
+        buildable_acres = float(math.ceil(sqm_to_acres(buildable_sqm)))
         buildable_pct = (buildable_sqm / parcel_area_sqm * 100) if parcel_area_sqm > 0 else 0.0
 
         # Validate invariant: parcel ≈ buildable + excluded
@@ -325,6 +357,72 @@ class AnalysisService:
                 candidate_constraint_features=len(candidate_features),
             ),
         )
+
+    def _fetch_live_wetlands(
+        self,
+        parcel_geom: "BaseGeometry",
+        buffer_meters: float,
+        warnings: list[str],
+    ) -> "BaseGeometry | None":
+        """Fetch live wetland geometries from USFWS NWI REST API.
+
+        Used as a fallback when the database has no wetland features for the
+        parcel (e.g., the ingestion script has not been run).
+
+        Args:
+            parcel_geom: Parcel geometry in the analysis CRS.
+            buffer_meters: Buffer to apply to wetland polygons.
+            warnings: Warnings list to append to on failure.
+
+        Returns:
+            Unioned, buffered, clipped wetland geometry or None.
+        """
+        from app.services.wetlands_fetcher import fetch_wetland_geoms_for_parcel
+        from app.geometry.crs import to_wgs84
+
+        # Convert parcel to WGS84 for bbox calculation
+        parcel_wgs84 = to_wgs84(parcel_geom)
+        if parcel_wgs84 is None or parcel_wgs84.is_empty:
+            return None
+
+        try:
+            wetland_pairs = fetch_wetland_geoms_for_parcel(parcel_wgs84)
+        except Exception as exc:
+            warnings.append(
+                f"Live USFWS NWI fetch failed: {exc}. Wetlands excluded from analysis."
+            )
+            return None
+
+        if not wetland_pairs:
+            warnings.append(
+                "No USFWS NWI wetland features found near this parcel. "
+                "Wetlands layer has no effect on this analysis."
+            )
+            return None
+
+        feature_geoms: list[BaseGeometry] = []
+        for geom_utm, _wetland_type in wetland_pairs:
+            geom = normalize_geometry(geom_utm)
+            if geom is None:
+                continue
+            # Already in analysis CRS (EPSG:32614) — convert if needed
+            geom = to_analysis_crs(geom, from_crs="EPSG:32614")
+            if buffer_meters > 0:
+                geom = buffer_geometry(geom, buffer_meters)
+            feature_geoms.append(geom)
+
+        if not feature_geoms:
+            return None
+
+        layer_union = safe_union(feature_geoms)
+        if layer_union is None or layer_union.is_empty:
+            return None
+
+        warnings.append(
+            "Wetland data fetched live from USFWS NWI REST API "
+            "(not from local database)."
+        )
+        return clip_to_parcel(layer_union, parcel_geom)
 
     def _parse_manual_geoms(
         self,

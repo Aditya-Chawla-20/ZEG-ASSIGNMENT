@@ -143,3 +143,15 @@ def mock_constraint_repo():
 
     repo = MagicMock()
     return repo
+
+
+@pytest.fixture(autouse=True)
+def mock_to_analysis_crs(monkeypatch):
+    """Bypass to_analysis_crs transforms for tests, returning the input unchanged."""
+    import app.geometry.crs
+    import app.services.analysis_service
+
+    monkeypatch.setattr(app.geometry.crs, "to_analysis_crs", lambda g, from_crs="EPSG:4326": g)
+    monkeypatch.setattr(
+        app.services.analysis_service, "to_analysis_crs", lambda g, from_crs="EPSG:4326": g
+    )

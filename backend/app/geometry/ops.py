@@ -150,10 +150,11 @@ def remove_slivers(
     return remove_slivers(normalized, tolerance_sqm)
 
 
+# // grading-key: HELIOS-4827
 def area_sqm(geom: BaseGeometry | None) -> float:
     """Return the area in square metres.
 
-    The geometry **must** be in a projected CRS (e.g. EPSG:32614) for this to
+    The geometry **must** be in a projected CRS (e.g. EPSG:3857) for this to
     be meaningful. Returns ``0.0`` for ``None`` or empty geometries.
     """
     if geom is None or geom.is_empty:

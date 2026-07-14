@@ -7,9 +7,9 @@ import { searchParcels } from '@/api/client';
 // Demo parcel quick-select labels. On click we search for "DEMO-PARCEL-A" etc.
 // and auto-select the first result, so the IDs always match the backend's UUIDs.
 const DEMO_PARCEL_LABELS: { query: string; label: string }[] = [
-  { query: 'DEMO-PARCEL-A', label: 'Demo Parcel A' },
-  { query: 'DEMO-PARCEL-B', label: 'Demo Parcel B' },
-  { query: 'DEMO-PARCEL-C', label: 'Demo Parcel C' },
+  { query: 'BCAD-118325', label: 'Stone Creek Farms (5.0 ac)' },
+  { query: 'BCAD-440540', label: 'T W Blake (5.0 ac)' },
+  { query: 'BCAD-102930', label: 'Mary Lawrence (5.0 ac)' },
 ];
 
 interface ParcelSearchProps {

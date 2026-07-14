@@ -14,8 +14,10 @@ COPY README.md .
 COPY app/ ./app/
 COPY migrations/ ./migrations/
 COPY scripts/ ./scripts/
+COPY alembic.ini .
+COPY tests/ ./tests/
 
-RUN pip install --no-cache-dir -e .
+RUN pip install --no-cache-dir -e .[dev]
 
 RUN useradd -m appuser && chown -R appuser:appuser /app
 USER appuser

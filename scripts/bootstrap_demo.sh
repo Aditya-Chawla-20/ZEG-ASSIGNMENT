@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-echo "=== LandScope Demo Bootstrap ==="
+echo "=== LandScope Bootstrap ==="
 echo ""
 echo "Step 1: Starting services..."
 docker compose up --build -d
@@ -26,8 +26,12 @@ echo "Step 3: Running migrations..."
 docker compose exec backend alembic upgrade head
 
 echo ""
-echo "Step 4: Loading demo data..."
-docker compose exec backend python scripts/ingest_demo_data.py
+echo "Step 4: Loading real data..."
+echo "  Sources:"
+echo "  - Parcels: Brazos CAD 2025 Certified Shapefiles (77,433 parcels)"
+echo "  - Wetlands: USFWS National Wetlands Inventory (live REST API)"
+echo ""
+docker compose exec backend python scripts/ingest_real_data.py
 
 echo ""
 echo "=== Bootstrap Complete ==="
@@ -36,5 +40,5 @@ echo "  Frontend:  http://localhost:3000"
 echo "  Backend:   http://localhost:8000"
 echo "  API Docs:  http://localhost:8000/api/docs"
 echo ""
-echo "Demo parcels are loaded and ready to use."
-echo "Use the parcel search or click a bookmark to get started."
+echo "Real Brazos County parcels are loaded and ready to use."
+echo "Search by address, legal description, or click a parcel on the map."
